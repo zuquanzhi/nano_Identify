@@ -24,17 +24,56 @@ typedef struct Armor
 
 // 定义颜色数组，用于可视化不同类别
 const std::vector<cv::Scalar> COLORS = {
-    cv::Scalar(255, 0, 0),     // 蓝色
-    cv::Scalar(0, 255, 0),     // 绿色
-    cv::Scalar(0, 0, 255),     // 红色
-    cv::Scalar(255, 255, 0),   // 青色
-    cv::Scalar(255, 0, 255),   // 洋红色
-    cv::Scalar(0, 255, 255),   // 黄色
+    cv::Scalar(255, 0, 0),    // 蓝色
+    cv::Scalar(0, 0, 255),    // 红色
+    cv::Scalar(128, 128, 128), // 灰色
+    cv::Scalar(255, 100, 0),   // 亮蓝色
+    cv::Scalar(0, 100, 255),   // 亮红色
+    cv::Scalar(200, 200, 200), // 浅灰色
+    cv::Scalar(180, 105, 255), // 蓝紫色
+    cv::Scalar(105, 180, 255), // 红紫色
+    cv::Scalar(170, 170, 170), // 中灰色
+    cv::Scalar(80, 127, 255),  // 浅蓝色
+    cv::Scalar(127, 80, 255),  // 浅红色
+    cv::Scalar(225, 225, 225)  // 亮灰色
 };
 
 // 类别名称映射
 const std::vector<std::string> CLASS_NAMES = {
-    "0", "1", "2", "3", "4", "5"
+    "armor_sentry_blue",      // 0
+    "armor_sentry_red",       // 1
+    "armor_sentry_none",      // 2
+    "armor_hero_blue",        // 3
+    "armor_hero_red",         // 4
+    "armor_hero_none",        // 5
+    "armor_engine_blue",      // 6
+    "armor_engine_red",       // 7
+    "armor_engine_none",      // 8
+    "armor_infantry_3_blue",  // 9
+    "armor_infantry_3_red",   // 10
+    "armor_infantry_3_none",  // 11
+    "armor_infantry_4_blue",  // 12
+    "armor_infantry_4_red",   // 13
+    "armor_infantry_4_none",  // 14
+    "armor_infantry_5_blue",  // 15
+    "armor_infantry_5_red",   // 16
+    "armor_infantry_5_none",  // 17
+    "armor_outpost_blue",     // 18
+    "armor_outpost_red",      // 19
+    "armor_outpost_none",     // 20
+    "armor_base_blue",        // 21
+    "armor_base_red",         // 22
+    "armor_infantry_Big_3_blue", // 23
+    "armor_infantry_Big_3_red",  // 24
+    "armor_infantry_Big_3_none", // 25
+    "armor_infantry_Big_4_blue", // 26
+    "armor_infantry_Big_4_red",  // 27
+    "armor_infantry_Big_4_none", // 28
+    "armor_infantry_Big_5_blue", // 29
+    "armor_infantry_Big_5_red",  // 30
+    "armor_infantry_Big_5_none", // 31
+    "armor_base_purple",      // 32
+    "yindaodeng"              // 33
 };
 
 // 预处理函数，将图像数据转换为模型输入格式
@@ -208,7 +247,7 @@ int main() {
         
         // 执行NMS获取装甲板检测结果
         std::vector<Armor> armors;
-        nms(result, 0.5, 0.45, armors,43); // 置信度阈值0.2，IOU阈值0.45，类别数14
+        nms(result, 0.4, 0.45, armors, 43); // 使用43作为类别总数(8个基础坐标 + 1个置信度 + 34个类别)
         
         std::cout << "检测到 " << armors.size() << " 个装甲板" << std::endl;
         
@@ -236,14 +275,21 @@ int main() {
             x4 = std::max(0, std::min(x4, original_image.cols - 1));
             y4 = std::max(0, std::min(y4, original_image.rows - 1));
             
-            // 绘制装甲板
+            // 绘制装甲板 - 使用装甲板类型的颜色
             cv::Scalar color = COLORS[armor.label % COLORS.size()];
+            
+            // 根据类型选择不同线宽，蓝色和红色装甲板使用粗线
+            int lineWidth = 2;
+            if (armor.label % 3 == 0 || armor.label % 3 == 1) { // 蓝色或红色装甲板
+                lineWidth = 3;
+            }
+            
             std::vector<cv::Point> polygon = {
                 cv::Point(x1, y1), cv::Point(x2, y2), 
                 cv::Point(x3, y3), cv::Point(x4, y4)
             };
             
-            cv::polylines(visualization_image, std::vector<std::vector<cv::Point>>{polygon}, true, color, 2);
+            cv::polylines(visualization_image, std::vector<std::vector<cv::Point>>{polygon}, true, color, lineWidth);
             
             // 绘制角点
             cv::circle(visualization_image, cv::Point(x1, y1), 5, cv::Scalar(0, 0, 255), -1);
@@ -251,15 +297,40 @@ int main() {
             cv::circle(visualization_image, cv::Point(x3, y3), 5, cv::Scalar(255, 0, 0), -1);
             cv::circle(visualization_image, cv::Point(x4, y4), 5, cv::Scalar(255, 255, 0), -1);
             
+            // 获取简短标签名
+            std::string shortLabel;
+            if (armor.label < CLASS_NAMES.size()) {
+                std::string fullName = CLASS_NAMES[armor.label];
+                size_t lastUnderscore = fullName.find_last_of('_');
+                
+                if (lastUnderscore != std::string::npos && lastUnderscore + 1 < fullName.length()) {
+                    // 获取最后一个下划线后的内容（颜色信息：blue/red/none）
+                    std::string colorInfo = fullName.substr(lastUnderscore + 1);
+                    
+                    // 获取类型信息（从第一个下划线后到最后一个下划线前）
+                    size_t firstUnderscore = fullName.find_first_of('_');
+                    if (firstUnderscore != std::string::npos && firstUnderscore < lastUnderscore) {
+                        std::string typeInfo = fullName.substr(firstUnderscore + 1, lastUnderscore - firstUnderscore - 1);
+                        
+                        // 创建简短标签：类型+颜色
+                        shortLabel = typeInfo + "_" + colorInfo;
+                    } else {
+                        shortLabel = fullName;
+                    }
+                } else {
+                    shortLabel = fullName;
+                }
+            } else {
+                shortLabel = "class" + std::to_string(armor.label);
+            }
+            
             // 标签信息
-            std::string label = (armor.label < CLASS_NAMES.size() ? 
-                                CLASS_NAMES[armor.label] : "class" + std::to_string(armor.label)) + 
-                                " " + std::to_string(int(armor.score * 100)) + "%";
+            std::string label = shortLabel + " " + std::to_string(int(armor.score * 100)) + "%";
             
             cv::putText(visualization_image, label, cv::Point(x1, y1 - 10),
                         cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
             
-            std::cout << "装甲板: 类别=" << label << ", 置信度=" << armor.score << std::endl;
+            std::cout << "装甲板: 类别=" << CLASS_NAMES[armor.label] << ", 置信度=" << armor.score << std::endl;
         }
         
         // 保存结果
@@ -273,3 +344,4 @@ int main() {
     
     return 0;
 }
+
