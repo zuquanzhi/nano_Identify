@@ -40,40 +40,12 @@ const std::vector<cv::Scalar> COLORS = {
 
 // 类别名称映射
 const std::vector<std::string> CLASS_NAMES = {
-    "armor_sentry_blue",      // 0
-    "armor_sentry_red",       // 1
-    "armor_sentry_none",      // 2
-    "armor_hero_blue",        // 3
-    "armor_hero_red",         // 4
-    "armor_hero_none",        // 5
-    "armor_engine_blue",      // 6
-    "armor_engine_red",       // 7
-    "armor_engine_none",      // 8
-    "armor_infantry_3_blue",  // 9
-    "armor_infantry_3_red",   // 10
-    "armor_infantry_3_none",  // 11
-    "armor_infantry_4_blue",  // 12
-    "armor_infantry_4_red",   // 13
-    "armor_infantry_4_none",  // 14
-    "armor_infantry_5_blue",  // 15
-    "armor_infantry_5_red",   // 16
-    "armor_infantry_5_none",  // 17
-    "armor_outpost_blue",     // 18
-    "armor_outpost_red",      // 19
-    "armor_outpost_none",     // 20
-    "armor_base_blue",        // 21
-    "armor_base_red",         // 22
-    "armor_infantry_Big_3_blue", // 23
-    "armor_infantry_Big_3_red",  // 24
-    "armor_infantry_Big_3_none", // 25
-    "armor_infantry_Big_4_blue", // 26
-    "armor_infantry_Big_4_red",  // 27
-    "armor_infantry_Big_4_none", // 28
-    "armor_infantry_Big_5_blue", // 29
-    "armor_infantry_Big_5_red",  // 30
-    "armor_infantry_Big_5_none", // 31
-    "armor_base_purple",      // 32
-    "yindaodeng"              // 33
+    "target_area",           // 0
+    "active_target_area",    // 1
+    "arrow_lightbar",        // 2
+    "active_lightbar",       // 3
+    "r_logo",                // 4
+    "ten_score"              // 5
 };
 
 // 预处理函数，将图像数据转换为模型输入格式
@@ -195,7 +167,7 @@ void nms(float* result, float conf_thr, float iou_thr, std::vector<Armor>& armor
 int main() {
     try {
         // 构建路径
-        std::string model_path = std::filesystem::absolute("../model/last.xml").string();
+        std::string model_path = std::filesystem::absolute("../model/best.xml").string();
         std::string image_path = std::filesystem::absolute("../img/image.png").string();
         
         // 检查文件是否存在
@@ -253,7 +225,7 @@ int main() {
         
         // 执行NMS获取装甲板检测结果
         std::vector<Armor> armors;
-        nms(result, 0.4, 0.45, armors, 43); // 使用43作为类别总数(8个基础坐标 + 1个置信度 + 34个类别)
+        nms(result, 0.4, 0.45, armors, 15); // 使用15作为类别总数(8个基础坐标 + 1个置信度 + 6个类别)
         
         std::cout << "检测到 " << armors.size() << " 个装甲板" << std::endl;
         
@@ -284,9 +256,9 @@ int main() {
             // 绘制装甲板 - 使用装甲板类型的颜色
             cv::Scalar color = COLORS[armor.label % COLORS.size()];
             
-            // 根据类型选择不同线宽，蓝色和红色装甲板使用粗线
+            // 根据类型选择不同线宽，激活区域使用粗线
             int lineWidth = 2;
-            if (armor.label % 3 == 0 || armor.label % 3 == 1) { // 蓝色或红色装甲板
+            if (armor.label == 1 || armor.label == 3) { // 激活的目标区域或光条
                 lineWidth = 3;
             }
             
@@ -303,29 +275,10 @@ int main() {
             cv::circle(visualization_image, cv::Point(x3, y3), 5, cv::Scalar(255, 0, 0), -1);
             cv::circle(visualization_image, cv::Point(x4, y4), 5, cv::Scalar(255, 255, 0), -1);
             
-            // 获取简短标签名
+            // 获取标签名
             std::string shortLabel;
             if (armor.label < CLASS_NAMES.size()) {
-                std::string fullName = CLASS_NAMES[armor.label];
-                size_t lastUnderscore = fullName.find_last_of('_');
-                
-                if (lastUnderscore != std::string::npos && lastUnderscore + 1 < fullName.length()) {
-                    // 获取最后一个下划线后的内容（颜色信息：blue/red/none）
-                    std::string colorInfo = fullName.substr(lastUnderscore + 1);
-                    
-                    // 获取类型信息（从第一个下划线后到最后一个下划线前）
-                    size_t firstUnderscore = fullName.find_first_of('_');
-                    if (firstUnderscore != std::string::npos && firstUnderscore < lastUnderscore) {
-                        std::string typeInfo = fullName.substr(firstUnderscore + 1, lastUnderscore - firstUnderscore - 1);
-                        
-                        // 创建简短标签：类型+颜色
-                        shortLabel = typeInfo + "_" + colorInfo;
-                    } else {
-                        shortLabel = fullName;
-                    }
-                } else {
-                    shortLabel = fullName;
-                }
+                shortLabel = CLASS_NAMES[armor.label];
             } else {
                 shortLabel = "class" + std::to_string(armor.label);
             }
