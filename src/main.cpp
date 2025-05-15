@@ -7,20 +7,16 @@
 #include <algorithm>
 #include <chrono>
 
-// 装甲板结构体定义
-typedef struct Armor
+// 结构体定义 - YOLOv5 xywh格式
+typedef struct Detection
 {
-    float x1;
-    float y1;
-    float x2;
-    float y2;
-    float x3;
-    float y3;
-    float x4;
-    float y4;
-    float score;
-    int label;
-} armor;
+    float x;      // 中心点x坐标
+    float y;      // 中心点y坐标
+    float width;  // 宽度
+    float height; // 高度
+    float score;  // 置信度
+    int label;    // 类别
+} Detection;
 
 // 定义颜色数组，用于可视化不同类别
 const std::vector<cv::Scalar> COLORS = {
@@ -40,40 +36,12 @@ const std::vector<cv::Scalar> COLORS = {
 
 // 类别名称映射
 const std::vector<std::string> CLASS_NAMES = {
-    "armor_sentry_blue",      // 0
-    "armor_sentry_red",       // 1
-    "armor_sentry_none",      // 2
-    "armor_hero_blue",        // 3
-    "armor_hero_red",         // 4
-    "armor_hero_none",        // 5
-    "armor_engine_blue",      // 6
-    "armor_engine_red",       // 7
-    "armor_engine_none",      // 8
-    "armor_infantry_3_blue",  // 9
-    "armor_infantry_3_red",   // 10
-    "armor_infantry_3_none",  // 11
-    "armor_infantry_4_blue",  // 12
-    "armor_infantry_4_red",   // 13
-    "armor_infantry_4_none",  // 14
-    "armor_infantry_5_blue",  // 15
-    "armor_infantry_5_red",   // 16
-    "armor_infantry_5_none",  // 17
-    "armor_outpost_blue",     // 18
-    "armor_outpost_red",      // 19
-    "armor_outpost_none",     // 20
-    "armor_base_blue",        // 21
-    "armor_base_red",         // 22
-    "armor_infantry_Big_3_blue", // 23
-    "armor_infantry_Big_3_red",  // 24
-    "armor_infantry_Big_3_none", // 25
-    "armor_infantry_Big_4_blue", // 26
-    "armor_infantry_Big_4_red",  // 27
-    "armor_infantry_Big_4_none", // 28
-    "armor_infantry_Big_5_blue", // 29
-    "armor_infantry_Big_5_red",  // 30
-    "armor_infantry_Big_5_none", // 31
-    "armor_base_purple",      // 32
-    "yindaodeng"              // 33
+    "target_area",           // 0
+    "active_target_area",    // 1
+    "arrow_lightbar",        // 2
+    "active_lightbar",       // 3
+    "r_logo",                // 4
+    "ten_score"              // 5
 };
 
 // 预处理函数，将图像数据转换为模型输入格式
@@ -103,99 +71,89 @@ void preprocess(cv::Mat &image, ov::Tensor &tensor)
     }
 }
 
-// 计算两个装甲板的IOU
-float cal_iou(const Armor a, const Armor b) {
-    // 计算两个四边形的外接矩形
-    int ax_min = std::min(std::min(std::min(a.x1, a.x2), a.x3), a.x4);
-    int ax_max = std::max(std::max(std::max(a.x1, a.x2), a.x3), a.x4);
-    int ay_min = std::min(std::min(std::min(a.y1, a.y2), a.y3), a.y4);
-    int ay_max = std::max(std::max(std::max(a.y1, a.y2), a.y3), a.y4);
-
-    int bx_min = std::min(std::min(std::min(b.x1, b.x2), b.x3), b.x4);
-    int bx_max = std::max(std::max(std::max(b.x1, b.x2), b.x3), b.x4);
-    int by_min = std::min(std::min(std::min(b.y1, b.y2), b.y3), b.y4);
-    int by_max = std::max(std::max(std::max(b.y1, b.y2), b.y3), b.y4);
-
-    float max_x = std::max(ax_min, bx_min);
-    float min_x = std::min(ax_max, bx_max);
-    float max_y = std::max(ay_min, by_min);
-    float min_y = std::min(ay_max, by_max);
-
-    // 原条件是错误的，正确应该是：
-    if(min_x <= max_x || min_y <= max_y)
+// 计算两个检测框的IOU (使用YOLOv5 xywh格式)
+float cal_iou(const Detection& a, const Detection& b) {
+    // 计算两个框的边界
+    float a_x1 = a.x - a.width / 2;
+    float a_y1 = a.y - a.height / 2;
+    float a_x2 = a.x + a.width / 2;
+    float a_y2 = a.y + a.height / 2;
+    
+    float b_x1 = b.x - b.width / 2;
+    float b_y1 = b.y - b.height / 2;
+    float b_x2 = b.x + b.width / 2;
+    float b_y2 = b.y + b.height / 2;
+    
+    // 计算交集区域
+    float inter_x1 = std::max(a_x1, b_x1);
+    float inter_y1 = std::max(a_y1, b_y1);
+    float inter_x2 = std::min(a_x2, b_x2);
+    float inter_y2 = std::min(a_y2, b_y2);
+    
+    // 检查是否有交集
+    if(inter_x1 >= inter_x2 || inter_y1 >= inter_y2)
         return 0;
     
-    // 修改为：
-    if(max_x >= min_x || max_y >= min_y)
-        return 0;
+    float inter_area = (inter_x2 - inter_x1) * (inter_y2 - inter_y1);
+    float a_area = a.width * a.height;
+    float b_area = b.width * b.height;
     
-    float over_area = (min_x - max_x) * (min_y - max_y);
-
-    float area_a = (ax_max - ax_min) * (ay_max - ay_min);
-    float area_b = (bx_max - bx_min) * (by_max - by_min);
-    float iou = over_area / (area_a + area_b - over_area);
+    // 计算IOU
+    float iou = inter_area / (a_area + b_area - inter_area);
     return iou;
 }
 
-// NMS处理函数
-void nms(float* result, float conf_thr, float iou_thr, std::vector<Armor>& armors, int class_nums) {
-    // 遍历result，如果conf大于阈值conf_thr，则放入armors
+// NMS处理函数 - 使用YOLOv5 xywh格式
+void nms(float* result, float conf_thr, float iou_thr, std::vector<Detection>& detections, int class_nums) {
+    // 遍历result，如果conf大于阈值conf_thr，则放入detections
     for(int i = 0; i < 25200; ++i) {
-        if(result[8 + i * class_nums] >= conf_thr) {
-            Armor temp;
-            // 将四个角点放入
-            temp.x1 = int(result[0 + i * class_nums]);
-            temp.y1 = int(result[1 + i * class_nums]);
-            temp.x2 = int(result[2 + i * class_nums]);
-            temp.y2 = int(result[3 + i * class_nums]);
-            temp.x3 = int(result[4 + i * class_nums]);
-            temp.y3 = int(result[5 + i * class_nums]);
-            temp.x4 = int(result[6 + i * class_nums]);
-            temp.y4 = int(result[7 + i * class_nums]);
+        if(result[4 + i * class_nums] >= conf_thr) {  // YOLOv5中第5个元素是置信度
+            Detection temp;
+            // 直接获取中心点和宽高
+            temp.x = result[0 + i * class_nums];      // 中心点x
+            temp.y = result[1 + i * class_nums];      // 中心点y
+            temp.width = result[2 + i * class_nums];  // 宽度
+            temp.height = result[3 + i * class_nums]; // 高度
 
             // 找到最大的条件类别概率并乘上conf作为类别概率
-            float cls = result[i * class_nums + 9];
-            int cnt = 0;
+            float max_cls_prob = result[i * class_nums + 5];   // 类别预测从第6个元素开始
+            int class_idx = 0;
             
-            // 修正类别索引计算
-            for(int j = i * class_nums + 9; j < i * class_nums + class_nums; ++j) {
-                if(cls < result[j]) {
-                    cls = result[j];
-                    cnt = j - (i * class_nums + 9);  // 计算类别索引
+            // 计算类别索引
+            for(int j = i * class_nums + 5; j < i * class_nums + class_nums; ++j) {
+                if(max_cls_prob < result[j]) {
+                    max_cls_prob = result[j];
+                    class_idx = j - (i * class_nums + 5);  // 计算类别索引
                 }
             }
             
-            cls *= result[8 + i * class_nums];
-            temp.score = cls;
-            temp.label = cnt;
-            armors.push_back(temp);
+            float conf_score = max_cls_prob * result[4 + i * class_nums];  // 类别概率 = 最大类别概率 * 置信度
+            temp.score = conf_score;
+            temp.label = class_idx;
+            detections.push_back(temp);
         }
     }
     
-    // 对得到的armor按score进行降序排序
-    std::sort(armors.begin(), armors.end(), [](Armor a, Armor b) { return a.score > b.score; });
+    // 对得到的detection按score进行降序排序
+    std::sort(detections.begin(), detections.end(), [](const Detection& a, const Detection& b) { return a.score > b.score; });
 
-    // 只保留置信度最高的一个装甲板
-    if (armors.size() > 1) {
-        armors.resize(1);
-    }
-
-    // 按iou_thr将重合度高的armor进行筛掉
-    for(int i = 0; i < int(armors.size()); ++i) {
-        for(int j = i + 1; j < int(armors.size()); ++j) {
-            // 如果与当前的框iou大于阈值则erase掉
-            if(cal_iou(armors[i], armors[j]) > iou_thr) {
-                armors.erase(armors.begin() + j);
+    // 标准YOLOv5 NMS处理
+    for(int i = 0; i < int(detections.size()); ++i) {
+        for(int j = i + 1; j < int(detections.size()); ++j) {
+            // 如果与当前的框iou大于阈值则删除
+            if(cal_iou(detections[i], detections[j]) > iou_thr) {
+                detections.erase(detections.begin() + j);
                 --j; // 删除元素后，索引减一继续检查
             }
         }
     }
 }
+
 // 重构后的主函数
 int main() {
     try {
         // 构建路径
-        std::string model_path = std::filesystem::absolute("../model/last.xml").string();
+        std::string model_path = std::filesystem::absolute("../model/best.xml").string();
         std::string image_path = std::filesystem::absolute("../img/image.png").string();
         
         // 检查文件是否存在
@@ -211,7 +169,7 @@ int main() {
             return 1;
         }
         
-        // 图像预处理
+        // 图像预处理 - YOLOv5标准预处理
         cv::Mat processed_image;
         float scale = std::min(float(640) / original_image.cols, float(640) / original_image.rows);
         int padding_y = int((640 - original_image.rows * scale) / 2);
@@ -251,92 +209,66 @@ int main() {
         std::cout << "输出张量形状: " << output_tensor.get_shape() << std::endl;
         auto result = output_tensor.data<float>();
         
-        // 执行NMS获取装甲板检测结果
-        std::vector<Armor> armors;
-        nms(result, 0.4, 0.45, armors, 43); // 使用43作为类别总数(8个基础坐标 + 1个置信度 + 34个类别)
+        // 执行NMS获取检测结果
+        std::vector<Detection> detections;
+        nms(result, 0.4, 0.45, detections, 11); // 使用11作为类别总数(4个基础坐标(x,y,w,h) + 1个置信度 + 6个类别)
         
-        std::cout << "检测到 " << armors.size() << " 个装甲板" << std::endl;
+        std::cout << "检测到 " << detections.size() << " 个目标" << std::endl;
         
         // 可视化结果
         cv::Mat visualization_image = original_image.clone();
         
-        for (const auto& armor : armors) {
-            // 映射坐标回原始图像
-            int x1 = int((armor.x1 - padding_x) / scale);
-            int y1 = int((armor.y1 - padding_y) / scale);
-            int x2 = int((armor.x2 - padding_x) / scale);
-            int y2 = int((armor.y2 - padding_y) / scale);
-            int x3 = int((armor.x3 - padding_x) / scale);
-            int y3 = int((armor.y3 - padding_y) / scale);
-            int x4 = int((armor.x4 - padding_x) / scale);
-            int y4 = int((armor.y4 - padding_y) / scale);
+        for (const auto& det : detections) {
+            // 映射中心点坐标和宽高回原始图像
+            int center_x = int((det.x - padding_x) / scale);
+            int center_y = int((det.y - padding_y) / scale);
+            int width = int(det.width / scale);
+            int height = int(det.height / scale);
+            
+            // 计算矩形框的四个角点
+            int x1 = center_x - width / 2;
+            int y1 = center_y - height / 2;
+            int x2 = center_x + width / 2;
+            int y2 = center_y + height / 2;
             
             // 确保坐标在图像范围内
             x1 = std::max(0, std::min(x1, original_image.cols - 1));
             y1 = std::max(0, std::min(y1, original_image.rows - 1));
             x2 = std::max(0, std::min(x2, original_image.cols - 1));
             y2 = std::max(0, std::min(y2, original_image.rows - 1));
-            x3 = std::max(0, std::min(x3, original_image.cols - 1));
-            y3 = std::max(0, std::min(y3, original_image.rows - 1));
-            x4 = std::max(0, std::min(x4, original_image.cols - 1));
-            y4 = std::max(0, std::min(y4, original_image.rows - 1));
             
-            // 绘制装甲板 - 使用装甲板类型的颜色
-            cv::Scalar color = COLORS[armor.label % COLORS.size()];
+            // 使用类别对应的颜色
+            cv::Scalar color = COLORS[det.label % COLORS.size()];
             
-            // 根据类型选择不同线宽，蓝色和红色装甲板使用粗线
+            // 根据类型选择不同线宽，特定类别使用粗线
             int lineWidth = 2;
-            if (armor.label % 3 == 0 || armor.label % 3 == 1) { // 蓝色或红色装甲板
+            if (det.label == 1 || det.label == 3) { // 激活的区域
                 lineWidth = 3;
             }
             
-            std::vector<cv::Point> polygon = {
-                cv::Point(x1, y1), cv::Point(x2, y2), 
-                cv::Point(x3, y3), cv::Point(x4, y4)
-            };
+            // 绘制矩形框
+            cv::rectangle(visualization_image, cv::Point(x1, y1), cv::Point(x2, y2), color, lineWidth);
             
-            cv::polylines(visualization_image, std::vector<std::vector<cv::Point>>{polygon}, true, color, lineWidth);
+            // 绘制中心点
+            cv::circle(visualization_image, cv::Point(center_x, center_y), 5, cv::Scalar(0, 0, 255), -1);
             
-            // 绘制角点
-            cv::circle(visualization_image, cv::Point(x1, y1), 5, cv::Scalar(0, 0, 255), -1);
-            cv::circle(visualization_image, cv::Point(x2, y2), 5, cv::Scalar(0, 255, 0), -1);
-            cv::circle(visualization_image, cv::Point(x3, y3), 5, cv::Scalar(255, 0, 0), -1);
-            cv::circle(visualization_image, cv::Point(x4, y4), 5, cv::Scalar(255, 255, 0), -1);
-            
-            // 获取简短标签名
+            // 获取标签名
             std::string shortLabel;
-            if (armor.label < CLASS_NAMES.size()) {
-                std::string fullName = CLASS_NAMES[armor.label];
-                size_t lastUnderscore = fullName.find_last_of('_');
-                
-                if (lastUnderscore != std::string::npos && lastUnderscore + 1 < fullName.length()) {
-                    // 获取最后一个下划线后的内容（颜色信息：blue/red/none）
-                    std::string colorInfo = fullName.substr(lastUnderscore + 1);
-                    
-                    // 获取类型信息（从第一个下划线后到最后一个下划线前）
-                    size_t firstUnderscore = fullName.find_first_of('_');
-                    if (firstUnderscore != std::string::npos && firstUnderscore < lastUnderscore) {
-                        std::string typeInfo = fullName.substr(firstUnderscore + 1, lastUnderscore - firstUnderscore - 1);
-                        
-                        // 创建简短标签：类型+颜色
-                        shortLabel = typeInfo + "_" + colorInfo;
-                    } else {
-                        shortLabel = fullName;
-                    }
-                } else {
-                    shortLabel = fullName;
-                }
+            if (det.label < CLASS_NAMES.size()) {
+                shortLabel = CLASS_NAMES[det.label];
             } else {
-                shortLabel = "class" + std::to_string(armor.label);
+                shortLabel = "class" + std::to_string(det.label);
             }
             
             // 标签信息
-            std::string label = shortLabel + " " + std::to_string(int(armor.score * 100)) + "%";
+            std::string label = shortLabel + " " + std::to_string(int(det.score * 100)) + "%";
             
             cv::putText(visualization_image, label, cv::Point(x1, y1 - 10),
                         cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
             
-            std::cout << "装甲板: 类别=" << CLASS_NAMES[armor.label] << ", 置信度=" << armor.score << std::endl;
+            std::cout << "目标: 类别=" << CLASS_NAMES[det.label] << ", 置信度=" << det.score 
+                      << ", 中心点=(" << center_x << "," << center_y << ")" 
+                      << ", 宽=" << width << ", 高=" << height << std::endl;
         }
         
         // 保存结果
