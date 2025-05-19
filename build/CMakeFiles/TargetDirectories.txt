@@ -1,0 +1,3 @@
+/home/dji/projects/nano_Identify/build/CMakeFiles/demo.dir
+/home/dji/projects/nano_Identify/build/CMakeFiles/edit_cache.dir
+/home/dji/projects/nano_Identify/build/CMakeFiles/rebuild_cache.dir
