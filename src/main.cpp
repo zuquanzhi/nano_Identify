@@ -191,164 +191,194 @@ void nms(float* result, float conf_thr, float iou_thr, std::vector<Armor>& armor
         }
     }
 }
-// 重构后的主函数
+
+
 int main() {
     try {
         // 构建路径
         std::string model_path = std::filesystem::absolute("../model/last.xml").string();
-        std::string image_path = std::filesystem::absolute("../img/image.png").string();
-        
-        // 检查文件是否存在
-        if (!std::filesystem::exists(model_path) || !std::filesystem::exists(image_path)) {
-            std::cerr << "错误: 找不到必要文件" << std::endl;
+        // 修改为视频文件路径，或者使用摄像头ID (例如 0, 1, ...)
+        std::string video_path = std::filesystem::absolute("../img/your_video.mp4").string(); // 示例视频文件
+        // int camera_id = 0; // 使用默认摄像头，如果想用视频文件，注释掉这行，取消上面一行的注释并修改路径
+
+        // 检查模型文件是否存在
+        if (!std::filesystem::exists(model_path)) {
+            std::cerr << "错误: 找不到模型文件: " << model_path << std::endl;
             return 1;
         }
-        
-        // 读取原始图像
-        cv::Mat original_image = cv::imread(image_path);
-        if (original_image.empty()) {
-            std::cerr << "无法读取图像文件" << std::endl;
-            return 1;
-        }
-        
-        // 图像预处理
-        cv::Mat processed_image;
-        float scale = std::min(float(640) / original_image.cols, float(640) / original_image.rows);
-        int padding_y = int((640 - original_image.rows * scale) / 2);
-        int padding_x = int((640 - original_image.cols * scale) / 2);
-        
-        cv::resize(original_image, processed_image, cv::Size(original_image.cols * scale, original_image.rows * scale));
-        cv::copyMakeBorder(processed_image, processed_image, padding_y, padding_y, padding_x, padding_x, 
-                          cv::BORDER_CONSTANT, cv::Scalar(144, 144, 144));
-        
+
         // 初始化推理引擎
         ov::Core core;
         auto model = core.read_model(model_path);
-        
+
         // 优先使用GPU，失败则回退到CPU
         ov::CompiledModel compiled_model;
+        std::string device_name = "CPU"; // 默认设备
         try {
             compiled_model = core.compile_model(model, "GPU");
-        } catch (const std::exception&) {
+            device_name = "GPU";
+            std::cout << "使用 GPU 进行推理。" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "GPU 初始化失败: " << e.what() << "，回退到 CPU。" << std::endl;
             compiled_model = core.compile_model(model, "CPU");
+            device_name = "CPU";
+            std::cout << "使用 CPU 进行推理。" << std::endl;
         }
-        
+
         // 创建推理请求并准备输入
         ov::InferRequest infer_request = compiled_model.create_infer_request();
         ov::Tensor input_tensor = infer_request.get_input_tensor();
-        std::cout << "输入张量形状: " << input_tensor.get_shape() << std::endl;
-        preprocess(processed_image, input_tensor);
-        
-        // 执行推理
-        auto infer_start = std::chrono::steady_clock::now();
-        infer_request.infer();
-        auto infer_end = std::chrono::steady_clock::now();
-        
-        std::cout << "推理时间: " << std::chrono::duration<double>(infer_end - infer_start).count() * 1000 << " 毫秒" << std::endl;
-        
-        // 获取输出并处理
-        ov::Tensor output_tensor = infer_request.get_output_tensor();
-        std::cout << "输出张量形状: " << output_tensor.get_shape() << std::endl;
-        auto result = output_tensor.data<float>();
-        
-        // 执行NMS获取装甲板检测结果
-        std::vector<Armor> armors;
-        nms(result, 0.4, 0.45, armors, 43); // 使用43作为类别总数(8个基础坐标 + 1个置信度 + 34个类别)
-        
-        std::cout << "检测到 " << armors.size() << " 个装甲板" << std::endl;
-        
-        // 可视化结果
-        cv::Mat visualization_image = original_image.clone();
-        
-        for (const auto& armor : armors) {
-            // 映射坐标回原始图像
-            int x1 = int((armor.x1 - padding_x) / scale);
-            int y1 = int((armor.y1 - padding_y) / scale);
-            int x2 = int((armor.x2 - padding_x) / scale);
-            int y2 = int((armor.y2 - padding_y) / scale);
-            int x3 = int((armor.x3 - padding_x) / scale);
-            int y3 = int((armor.y3 - padding_y) / scale);
-            int x4 = int((armor.x4 - padding_x) / scale);
-            int y4 = int((armor.y4 - padding_y) / scale);
-            
-            // 确保坐标在图像范围内
-            x1 = std::max(0, std::min(x1, original_image.cols - 1));
-            y1 = std::max(0, std::min(y1, original_image.rows - 1));
-            x2 = std::max(0, std::min(x2, original_image.cols - 1));
-            y2 = std::max(0, std::min(y2, original_image.rows - 1));
-            x3 = std::max(0, std::min(x3, original_image.cols - 1));
-            y3 = std::max(0, std::min(y3, original_image.rows - 1));
-            x4 = std::max(0, std::min(x4, original_image.cols - 1));
-            y4 = std::max(0, std::min(y4, original_image.rows - 1));
-            
-            // 绘制装甲板 - 使用装甲板类型的颜色
-            cv::Scalar color = COLORS[armor.label % COLORS.size()];
-            
-            // 根据类型选择不同线宽，蓝色和红色装甲板使用粗线
-            int lineWidth = 2;
-            if (armor.label % 3 == 0 || armor.label % 3 == 1) { // 蓝色或红色装甲板
-                lineWidth = 3;
+        std::cout << "模型输入张量形状: " << input_tensor.get_shape() << std::endl;
+        ov::Tensor output_tensor_info = compiled_model.output().get_tensor();
+        std::cout << "模型输出张量形状: " << output_tensor_info.get_shape() << std::endl;
+
+
+        // 打开视频捕获
+        cv::VideoCapture cap;
+        if (!video_path.empty()) { // 如果使用视频文件
+            cap.open(video_path);
+            if (!cap.isOpened()) {
+                std::cerr << "错误: 无法打开视频文件: " << video_path << std::endl;
+                return 1;
             }
+            std::cout << "从视频文件读取: " << video_path << std::endl;
+        } else { // 如果使用摄像头
+            cap.open(camera_id);
+            if (!cap.isOpened()) {
+                std::cerr << "错误: 无法打开摄像头 ID: " << camera_id << std::endl;
+                return 1;
+            }
+            std::cout << "从摄像头 " << camera_id << " 读取。" << std::endl;
+        }
+
+
+        cv::Mat frame;
+        while (true) {
+            cap >> frame; // 读取新帧
+            if (frame.empty()) {
+                std::cout << "视频结束或无法读取帧。" << std::endl;
+                break;
+            }
+
+            cv::Mat original_image_for_processing = frame.clone();
+
+            // 图像预处理
+            cv::Mat processed_image;
+            float scale = std::min(float(640) / original_image_for_processing.cols, float(640) / original_image_for_processing.rows);
+            int new_w = static_cast<int>(original_image_for_processing.cols * scale);
+            int new_h = static_cast<int>(original_image_for_processing.rows * scale);
             
-            std::vector<cv::Point> polygon = {
-                cv::Point(x1, y1), cv::Point(x2, y2), 
-                cv::Point(x3, y3), cv::Point(x4, y4)
-            };
-            
-            cv::polylines(visualization_image, std::vector<std::vector<cv::Point>>{polygon}, true, color, lineWidth);
-            
-            // 绘制角点
-            cv::circle(visualization_image, cv::Point(x1, y1), 5, cv::Scalar(0, 0, 255), -1);
-            cv::circle(visualization_image, cv::Point(x2, y2), 5, cv::Scalar(0, 255, 0), -1);
-            cv::circle(visualization_image, cv::Point(x3, y3), 5, cv::Scalar(255, 0, 0), -1);
-            cv::circle(visualization_image, cv::Point(x4, y4), 5, cv::Scalar(255, 255, 0), -1);
-            
-            // 获取简短标签名
-            std::string shortLabel;
-            if (armor.label < CLASS_NAMES.size()) {
-                std::string fullName = CLASS_NAMES[armor.label];
-                size_t lastUnderscore = fullName.find_last_of('_');
-                
-                if (lastUnderscore != std::string::npos && lastUnderscore + 1 < fullName.length()) {
-                    // 获取最后一个下划线后的内容（颜色信息：blue/red/none）
-                    std::string colorInfo = fullName.substr(lastUnderscore + 1);
-                    
-                    // 获取类型信息（从第一个下划线后到最后一个下划线前）
-                    size_t firstUnderscore = fullName.find_first_of('_');
-                    if (firstUnderscore != std::string::npos && firstUnderscore < lastUnderscore) {
-                        std::string typeInfo = fullName.substr(firstUnderscore + 1, lastUnderscore - firstUnderscore - 1);
-                        
-                        // 创建简短标签：类型+颜色
-                        shortLabel = typeInfo + "_" + colorInfo;
+            int padding_y = (640 - new_h) / 2;
+            int padding_x = (640 - new_w) / 2;
+
+            cv::resize(original_image_for_processing, processed_image, cv::Size(new_w, new_h));
+            cv::copyMakeBorder(processed_image, processed_image, padding_y, 640 - new_h - padding_y, padding_x, 640 - new_w - padding_x,
+                              cv::BORDER_CONSTANT, cv::Scalar(114, 114, 114)); // 通常使用114作为YOLO系列的padding颜色
+
+            preprocess(processed_image, input_tensor);
+
+            // 执行推理
+            auto infer_start = std::chrono::steady_clock::now();
+            infer_request.infer();
+            auto infer_end = std::chrono::steady_clock::now();
+            double infer_time_ms = std::chrono::duration<double>(infer_end - infer_start).count() * 1000;
+            // std::cout << "帧推理时间: " << infer_time_ms << " 毫秒" << std::endl;
+
+            // 获取输出并处理
+            ov::Tensor output_tensor = infer_request.get_output_tensor();
+            auto result = output_tensor.data<float>();
+
+            // 执行NMS获取装甲板检测结果
+            std::vector<Armor> armors;
+            nms(result, 0.4, 0.45, armors, 43); // 使用43作为类别总数(8个基础坐标 + 1个置信度 + 34个类别)
+
+            // std::cout << "当前帧检测到 " << armors.size() << " 个装甲板" << std::endl;
+
+            cv::Mat visualization_image = original_image_for_processing.clone();
+
+            for (const auto& armor : armors) {
+                // 映射坐标回原始图像
+                int x1 = int((armor.x1 - padding_x) / scale);
+                int y1 = int((armor.y1 - padding_y) / scale);
+                int x2 = int((armor.x2 - padding_x) / scale);
+                int y2 = int((armor.y2 - padding_y) / scale);
+                int x3 = int((armor.x3 - padding_x) / scale);
+                int y3 = int((armor.y3 - padding_y) / scale);
+                int x4 = int((armor.x4 - padding_x) / scale);
+                int y4 = int((armor.y4 - padding_y) / scale);
+
+                // 确保坐标在图像范围内
+                x1 = std::max(0, std::min(x1, original_image_for_processing.cols - 1));
+                y1 = std::max(0, std::min(y1, original_image_for_processing.rows - 1));
+                x2 = std::max(0, std::min(x2, original_image_for_processing.cols - 1));
+                y2 = std::max(0, std::min(y2, original_image_for_processing.rows - 1));
+                x3 = std::max(0, std::min(x3, original_image_for_processing.cols - 1));
+                y3 = std::max(0, std::min(y3, original_image_for_processing.rows - 1));
+                x4 = std::max(0, std::min(x4, original_image_for_processing.cols - 1));
+                y4 = std::max(0, std::min(y4, original_image_for_processing.rows - 1));
+
+                cv::Scalar color = COLORS[armor.label % COLORS.size()];
+                int lineWidth = (armor.label % 3 == 0 || armor.label % 3 == 1) ? 3 : 2;
+
+                std::vector<cv::Point> polygon = {
+                    cv::Point(x1, y1), cv::Point(x2, y2),
+                    cv::Point(x3, y3), cv::Point(x4, y4)
+                };
+
+                cv::polylines(visualization_image, std::vector<std::vector<cv::Point>>{polygon}, true, color, lineWidth);
+
+                cv::circle(visualization_image, cv::Point(x1, y1), 3, cv::Scalar(0, 0, 255), -1);
+                cv::circle(visualization_image, cv::Point(x2, y2), 3, cv::Scalar(0, 255, 0), -1);
+                cv::circle(visualization_image, cv::Point(x3, y3), 3, cv::Scalar(255, 0, 0), -1);
+                cv::circle(visualization_image, cv::Point(x4, y4), 3, cv::Scalar(255, 255, 0), -1);
+
+                std::string shortLabel;
+                if (armor.label < CLASS_NAMES.size()) {
+                    std::string fullName = CLASS_NAMES[armor.label];
+                    size_t lastUnderscore = fullName.find_last_of('_');
+                    if (lastUnderscore != std::string::npos && lastUnderscore + 1 < fullName.length()) {
+                        std::string colorInfo = fullName.substr(lastUnderscore + 1);
+                        size_t firstUnderscore = fullName.find_first_of('_');
+                        if (firstUnderscore != std::string::npos && firstUnderscore < lastUnderscore) {
+                            std::string typeInfo = fullName.substr(firstUnderscore + 1, lastUnderscore - firstUnderscore - 1);
+                            shortLabel = typeInfo + "_" + colorInfo;
+                        } else {
+                            shortLabel = fullName;
+                        }
                     } else {
                         shortLabel = fullName;
                     }
                 } else {
-                    shortLabel = fullName;
+                    shortLabel = "class" + std::to_string(armor.label);
                 }
-            } else {
-                shortLabel = "class" + std::to_string(armor.label);
+                std::string label_text = shortLabel + " " + std::to_string(int(armor.score * 100)) + "%";
+                cv::putText(visualization_image, label_text, cv::Point(std::min({x1,x2,x3,x4}), std::min({y1,y2,y3,y4}) - 10),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
+                std::cout << "装甲板: 类别=" << (armor.label < CLASS_NAMES.size() ? CLASS_NAMES[armor.label] : "未知") << ", 置信度=" << armor.score << std::endl;
             }
             
-            // 标签信息
-            std::string label = shortLabel + " " + std::to_string(int(armor.score * 100)) + "%";
-            
-            cv::putText(visualization_image, label, cv::Point(x1, y1 - 10),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.6, color, 2);
-            
-            std::cout << "装甲板: 类别=" << CLASS_NAMES[armor.label] << ", 置信度=" << armor.score << std::endl;
+            // 显示FPS
+            double fps = 1000.0 / infer_time_ms;
+            cv::putText(visualization_image, "FPS: " + std::to_string(static_cast<int>(fps)), 
+                        cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
+
+
+            cv::imshow("OpenVINO Armor Detection", visualization_image);
+
+            // 按 ESC 键退出
+            if (cv::waitKey(1) == 27) {
+                break;
+            }
         }
-        
-        // 保存结果
-        cv::imwrite(std::filesystem::absolute("../img/output_visualization.jpg").string(), visualization_image);
-        std::cout << "推理完成！" << std::endl;
-        
+
+        cap.release();
+        cv::destroyAllWindows();
+        std::cout << "视频处理完成！" << std::endl;
+
     } catch (const std::exception& e) {
         std::cerr << "发生异常: " << e.what() << std::endl;
         return 1;
     }
-    
+
     return 0;
 }
-
-
